@@ -13,8 +13,55 @@ function josaIGa(word) { const last = word[word.length - 1]; return hasBatchim(l
 
 const OPPOSITE = { '아침형': '저녁형', '저녁형': '아침형', 'P': 'J', 'J': 'P' };
 
-// 지표별 서술어 어간: 반려동물수는 "많다", 그 외 점수형 지표는 "높다"
-function verbStem(metricField) { return metricField === 'pet' ? '많' : '높'; }
+// 주어(subject)가 속한 "그룹군"
+const FAMILY = { '아침형': 'chrono', '저녁형': 'chrono', 'P': 'mbti', 'J': 'mbti' };
+
+// ── 지표(metric) 정의: 점수형(scale) + 범주형(category) ──
+// 점수형은 원래 있던 4개 지표, 범주형은 주어의 반대 그룹군에서만 골라 쓸 수 있게 한다.
+// (예: 주어가 '아침형/저녁형' 계열이면 metric으로 'P'/'J' 비율을, 주어가 'P/J' 계열이면 '아침형'/'저녁형' 비율을 고를 수 있음)
+const BASE_METRIC_OPTIONS = [
+  { value: 'meal', label: '급식만족도' },
+  { value: 'nag', label: '잔소리집중도' },
+  { value: 'pet', label: '반려동물수' },
+  { value: 'honesty', label: '숙제성실도' },
+];
+const CATEGORY_METRIC_OPTIONS = {
+  chrono: [ { value: 'catP', label: 'P' }, { value: 'catJ', label: 'J' } ],
+  mbti:   [ { value: 'catMorning', label: '아침형' }, { value: 'catEvening', label: '저녁형' } ],
+};
+const METRIC_REGISTRY = {
+  meal:        { label: '급식만족도', type: 'scale' },
+  nag:         { label: '잔소리집중도', type: 'scale' },
+  pet:         { label: '반려동물수', type: 'scale' },
+  honesty:     { label: '숙제성실도', type: 'scale' },
+  catP:        { label: 'P', type: 'category', field: 'mbti', target: 'P' },
+  catJ:        { label: 'J', type: 'category', field: 'mbti', target: 'J' },
+  catMorning:  { label: '아침형', type: 'category', field: 'chrono', target: '아침형' },
+  catEvening:  { label: '저녁형', type: 'category', field: 'chrono', target: '저녁형' },
+};
+
+// 지표별 서술어 어간: 반려동물수/범주형 비율 비교는 "많다", 그 외 점수형 지표는 "높다"
+function verbStem(metricValue) {
+  const def = METRIC_REGISTRY[metricValue];
+  if (def.type === 'category') return '많';
+  return metricValue === 'pet' ? '많' : '높';
+}
+
+// 주어(subject) 값에 맞춰 metric select의 옵션을 다시 구성한다.
+// (점수형 4개는 항상 유지 + 반대 그룹군의 범주형 2개를 추가)
+function populateMetricOptions(selectEl, subjectValue, keepValue) {
+  const family = FAMILY[subjectValue];
+  const catOpts = CATEGORY_METRIC_OPTIONS[family] || [];
+  const all = [...BASE_METRIC_OPTIONS, ...catOpts];
+  selectEl.innerHTML = all.map(o => `<option value="${o.value}">${o.label}</option>`).join('');
+  if (keepValue && all.some(o => o.value === keepValue)) selectEl.value = keepValue;
+}
+
+// 그룹 내에서 특정 범주값의 비율(%)을 계산
+function categoryPercent(arr, field, target) {
+  if (!arr.length) return 0;
+  return arr.filter(d => String(d[field]) === target).length / arr.length * 100;
+}
 
 const CONFETTI_COLORS = ['var(--pink)', 'var(--teal)', 'var(--yellow)'];
 function spawnConfetti(layer) {
@@ -39,12 +86,7 @@ function initBattle(container) {
         <option>아침형</option><option>저녁형</option><option>P</option><option>J</option>
       </select>
       <span class="josa" id="josa1">은(는)</span>
-      <select id="metric" class="select">
-        <option value="meal">급식만족도</option>
-        <option value="nag">잔소리집중도</option>
-        <option value="pet">반려동물수</option>
-        <option value="honesty">숙제성실도</option>
-      </select>
+      <select id="metric" class="select"></select>
       <span class="josa" id="josa2">가</span>
       <span class="static-text" id="verbText">높다!</span>
     </div>
@@ -93,7 +135,7 @@ function initBattle(container) {
   const confettiLayer = container.querySelector('#confettiLayer');
   const info = container.querySelector('#countInfo');
 
-  function metricLabel() { return metric.options[metric.selectedIndex].textContent; }
+  function metricLabel() { return METRIC_REGISTRY[metric.value].label; }
 
   function updateSentence() {
     const sv = subject.value;
@@ -108,16 +150,23 @@ function initBattle(container) {
     resultSentence.classList.remove('show'); resultSentence.textContent = '';
     resultLeft.classList.remove('ok', 'no', 'tie');
   }
-  subject.addEventListener('change', updateSentence);
+  subject.addEventListener('change', () => {
+    // 주어가 바뀌면 반대 그룹군의 범주형 옵션으로 metric 목록을 다시 구성한다
+    populateMetricOptions(metric, subject.value, metric.value);
+    updateSentence();
+  });
   metric.addEventListener('change', updateSentence);
+  populateMetricOptions(metric, subject.value);
   updateSentence();
 
   start.addEventListener('click', () => {
     const sv = subject.value;
-    const mf = metric.value;
+    const metricDef = METRIC_REGISTRY[metric.value];
     const mLabel = metricLabel();
-    const stem = verbStem(mf);
+    const stem = verbStem(metric.value);
     const ov = OPPOSITE[sv] || '나머지';
+    const isCategory = metricDef.type === 'category';
+    const unit = isCategory ? '%' : '';
 
     sound.drumroll();
     stamp.textContent = ''; stamp.classList.remove('show');
@@ -128,11 +177,13 @@ function initBattle(container) {
     setTimeout(() => {
       const group = state.data.filter(d => String(d.chrono) === sv || String(d.mbti) === sv);
       const rest = state.data.filter(d => !(String(d.chrono) === sv || String(d.mbti) === sv));
-      const gAvg = avg(group, mf); const rAvg = avg(rest, mf);
+
+      const gAvg = isCategory ? categoryPercent(group, metricDef.field, metricDef.target) : avg(group, metric.value);
+      const rAvg = isCategory ? categoryPercent(rest, metricDef.field, metricDef.target) : avg(rest, metric.value);
       const max = Math.max(gAvg, rAvg, 1);
 
-      barA.style.height = Math.max(6, (gAvg / max) * 100) + '%'; valueA.textContent = round1(gAvg);
-      barB.style.height = Math.max(6, (rAvg / max) * 100) + '%'; valueB.textContent = round1(rAvg);
+      barA.style.height = Math.max(6, (gAvg / max) * 100) + '%'; valueA.textContent = round1(gAvg) + unit;
+      barB.style.height = Math.max(6, (rAvg / max) * 100) + '%'; valueB.textContent = round1(rAvg) + unit;
       info.textContent = `응답 ${state.data.length}명 기준 결과예요. 사람이 늘어나면 또 바뀔 수도 있어요 😏`;
 
       setTimeout(() => {
